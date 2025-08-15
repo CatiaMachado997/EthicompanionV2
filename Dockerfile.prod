@@ -1,0 +1,67 @@
+# Dockerfile otimizado para produção
+FROM python:3.11-alpine as builder
+
+# Instalar dependências de build para Alpine
+RUN apk add --no-cache \
+    build-base \
+    libffi-dev \
+    openssl-dev \
+    curl
+
+# Criar diretório para wheels
+WORKDIR /wheels
+
+# Copiar requirements e criar wheels
+COPY requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
+
+# Estágio de produção
+FROM python:3.11-alpine
+
+# Instalar dependências runtime
+RUN apk add --no-cache \
+    curl \
+    libffi \
+    openssl \
+    && addgroup -g 1001 -S appuser \
+    && adduser -S appuser -G appuser -u 1001
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Copiar e instalar wheels
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache /wheels/* && rm -rf /wheels
+
+# Copiar aplicação
+COPY --chown=appuser:appuser . .
+
+# Criar diretórios necessários
+RUN mkdir -p /app/logs && \
+    chown -R appuser:appuser /app
+
+# Mudar para usuário não-root
+USER appuser
+
+# Variáveis de ambiente para produção
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONHASHSEED=random
+
+# Expor porta
+EXPOSE 8000
+
+# Health check otimizado
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/docs || exit 1
+
+# Comando otimizado para produção
+CMD ["uvicorn", "main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "4", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--access-log", \
+     "--log-level", "info"]

@@ -1,0 +1,37 @@
+# Ignorar arquivos desnecessários no Docker build
+.git
+.gitignore
+README.md
+.env
+.next
+node_modules
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.DS_Store
+.vscode
+*.swp
+*.swo
+*~
+
+# Arquivos de teste
+test_*.py
+teste_*.py
+
+# Logs e dados temporários
+failed_responses.log
+*.log

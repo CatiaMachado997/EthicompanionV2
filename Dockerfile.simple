@@ -1,0 +1,23 @@
+# Dockerfile simplificado para debug
+FROM python:3.11-slim
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Copiar requirements e instalar dependências
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY . .
+
+# Variáveis de ambiente
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+
+# Expor porta da aplicação FastAPI
+EXPOSE 8000
+
+# Comando para iniciar a aplicação com uvicorn
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]

@@ -1,0 +1,15 @@
+# API Keys for Ethic Companion V2
+# Copy this file to .env and fill in your actual API keys
+
+# Weaviate Vector Database
+WEAVIATE_API_KEY=your_weaviate_api_key_here
+
+# Google Generative AI (Gemini)
+GOOGLE_API_KEY=your_google_api_key_here
+
+# Tavily Search API
+TAVILY_API_KEY=your_tavily_api_key_here
+
+# Optional: Weaviate connection settings
+WEAVIATE_HOST=localhost
+WEAVIATE_PORT=8080

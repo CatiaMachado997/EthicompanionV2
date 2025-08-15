@@ -1,0 +1,60 @@
+# Multi-stage build para aplicação FastAPI
+FROM python:3.11-slim as builder
+
+# Instalar dependências de build
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Criar diretório para dependências
+WORKDIR /wheels
+
+# Copiar requirements e instalar dependências em wheels
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip wheel --no-cache-dir --wheel-dir=/wheels -r requirements.txt
+
+# Estágio final
+FROM python:3.11-slim
+
+# Criar usuário não-root para segurança
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Instalar dependências runtime mínimas
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Copiar wheels do estágio builder e instalar
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache /wheels/* && rm -rf /wheels
+
+# Copiar código da aplicação
+COPY --chown=appuser:appuser . .
+
+# Criar diretórios necessários
+RUN mkdir -p /app/logs && \
+    chown -R appuser:appuser /app
+
+# Mudar para usuário não-root
+USER appuser
+
+# Variáveis de ambiente
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Expor porta da aplicação FastAPI
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/docs || exit 1
+
+# Comando para iniciar a aplicação com uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
