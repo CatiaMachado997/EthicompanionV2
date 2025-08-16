@@ -9,7 +9,7 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 def test_tavily():
     print("🧪 Testando Tavily Search...")
     
-    # Configurar API key
+    # Configurar temporariamente
     os.environ['TAVILY_API_KEY'] = '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'
     
     try:

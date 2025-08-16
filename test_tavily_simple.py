@@ -9,7 +9,7 @@ from langchain_tavily import TavilySearch
 def test_tavily_simple():
     print("🧪 Testando Tavily com nova importação...")
     
-    # Configurar API key
+        # Configurar API key
     os.environ['TAVILY_API_KEY'] = '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'
     
     try:

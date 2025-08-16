@@ -80,3 +80,17 @@ memory/
 # Temporary files
 tmp/
 temp/
+
+# Arquivos com API Keys (proteção extra)
+*_keys.txt
+*api_key*
+*secret*
+credentials.txt
+
+# Backups de arquivos com chaves
+*.bak
+*_backup.*
+
+# Arquivos de configuração local
+local_config.*
+dev_config.*

@@ -11,7 +11,7 @@ from datetime import datetime
 def test_search_accuracy():
     print("🧪 Testando precisão da pesquisa Tavily...")
     
-    # Configurar API key
+        # Configurar temporariamente
     os.environ['TAVILY_API_KEY'] = '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'
     
     # Perguntas de teste com respostas conhecidas
