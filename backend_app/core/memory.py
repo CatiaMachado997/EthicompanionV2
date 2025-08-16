@@ -26,13 +26,20 @@ class VectorMemory:
                     skip_init_checks=True
                 )
             else:
-                # Desenvolvimento local - conexão local
-                self.client = weaviate.connect_to_local(
-                    host=weaviate_config["host"],
-                    port=weaviate_config["port"],
-                    auth_credentials=weaviate.auth.AuthApiKey(weaviate_config["api_key"]),
-                    skip_init_checks=True
-                )
+                # Desenvolvimento local - conexão local sem autenticação
+                if weaviate_config["api_key"]:
+                    self.client = weaviate.connect_to_local(
+                        host=weaviate_config["host"],
+                        port=weaviate_config["port"],
+                        auth_credentials=weaviate.auth.AuthApiKey(weaviate_config["api_key"]),
+                        skip_init_checks=True
+                    )
+                else:
+                    self.client = weaviate.connect_to_local(
+                        host=weaviate_config["host"],
+                        port=weaviate_config["port"],
+                        skip_init_checks=True
+                    )
             
             # Cria o schema se não existir
             self._create_schema()

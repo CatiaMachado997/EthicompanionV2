@@ -7,7 +7,8 @@ export async function POST(request: NextRequest) {
     console.log('Frontend received request:', body);
     
     // Forward the request to the FastAPI backend
-    const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:8000';
+    const backendUrl = 'http://127.0.0.1:8000';
+    console.log('Using backend URL:', backendUrl);
     const response = await fetch(`${backendUrl}/chat`, {
       method: 'POST',
       headers: {

@@ -164,5 +164,5 @@ def get_weaviate_config() -> dict:
             "host": os.getenv("WEAVIATE_HOST", "localhost"),
             "port": int(os.getenv("WEAVIATE_PORT", "8080")),
             "scheme": "http",
-            "api_key": get_api_key("WEAVIATE_API_KEY")
+            "api_key": None  # Sem autenticação no desenvolvimento
         }
