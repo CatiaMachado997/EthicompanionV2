@@ -3,8 +3,8 @@
 echo "🚨 EMERGENCY SECURITY CLEANUP"
 echo "============================="
 
-# The exposed API key that needs to be removed
-EXPOSED_KEY="AIzaSyC3KetzSrufPXNsvI49-YGFAYO9mhxBWao"
+# The exposed API key that needs to be removed (REDACTED)
+EXPOSED_KEY="AIzaSyC3Ke***REDACTED***9mhxBWao"
 
 echo "🔐 Step 1: Stash current changes"
 git stash push -m "Security cleanup - stashing changes"

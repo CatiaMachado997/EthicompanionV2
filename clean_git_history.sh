@@ -2,8 +2,8 @@
 
 echo "🧹 Cleaning Git History of Exposed API Keys..."
 
-# The exposed key pattern we found
-EXPOSED_KEY="AIzaSyC3KetzSrufPXNsvI49-YGFAYO9mhxBWao"
+# The exposed key pattern we found (REDACTED)
+EXPOSED_KEY="AIzaSyC3Ke***REDACTED***9mhxBWao"
 
 echo "⚠️  WARNING: This will rewrite git history!"
 echo "📋 Exposed key to remove: ${EXPOSED_KEY:0:10}...${EXPOSED_KEY: -10}"
