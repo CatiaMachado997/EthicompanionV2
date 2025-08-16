@@ -8,8 +8,14 @@ source venv/bin/activate
 
 # Configurar variáveis de ambiente
 export WEAVIATE_API_KEY="minha-chave-secreta-dev"
-export GOOGLE_API_KEY="AIzaSyC3KetzSrufPXNsvI49-YGFAYO9mhxBWao"
-export TAVILY_API_KEY="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"
+# Load environment variables from .env file
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+    echo "✅ Variáveis carregadas do arquivo .env"
+else
+    echo "❌ Arquivo .env não encontrado! Crie um com as API keys."
+    exit 1
+fi
 
 # Verificar se as variáveis estão configuradas
 echo "✅ WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:0:10}..."

@@ -18,8 +18,13 @@ async def chat_simple_endpoint(user_input: UserInput):
     Endpoint POST /chat-simple que usa apenas Tavily Search (sem LLM)
     """
     try:
-                # Configurar temporariamente
-        os.environ['TAVILY_API_KEY'] = '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'
+                        # Configurar API key - Load from environment
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        if not os.getenv('TAVILY_API_KEY'):
+            print("❌ TAVILY_API_KEY não encontrada no .env")
+            return
         
         # Criar a ferramenta de pesquisa
         search_tool = TavilySearchResults(max_results=3)

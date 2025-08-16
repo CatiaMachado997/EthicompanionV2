@@ -9,8 +9,13 @@ from langchain_tavily import TavilySearch
 def test_tavily_simple():
     print("🧪 Testando Tavily com nova importação...")
     
-        # Configurar API key
-    os.environ['TAVILY_API_KEY'] = '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'
+        # Configurar API key - Load from environment
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    if not os.getenv('TAVILY_API_KEY'):
+        print("❌ TAVILY_API_KEY não encontrada no .env")
+        return
     
     try:
         # Criar a ferramenta de pesquisa

@@ -9,6 +9,27 @@ Um assistente de IA inteligente com memória vetorial e pesquisa em tempo real, 
 - **🧠 Memória Vetorial**: Contexto de conversas anteriores via Weaviate
 - **🎨 Interface Moderna**: Design fluido com tons terrosos
 - **⚡ AgentExecutor**: Sistema de ferramentas inteligente
+- **🔒 Segurança Máxima**: Proteção completa de API keys
+- **📁 Estrutura Organizada**: Projeto bem estruturado e limpo
+
+## 📁 Estrutura do Projeto
+
+```
+📦 ethic-companion-v2/
+├── 🗂️ backend_app/          # Backend FastAPI
+│   ├── api/                 # Endpoints da API
+│   ├── core/               # Lógica principal
+│   └── models/             # Modelos de dados
+├── 🗂️ src/                 # Frontend Next.js
+│   └── app/                # App Router do Next.js
+├── 🗂️ tests/               # Todos os testes
+├── 🗂️ docker/              # Configurações Docker
+├── 🗂️ scripts/             # Scripts utilitários
+├── 🗂️ docs/                # Documentação
+├── 🔒 .env                 # Variáveis secretas (não commitado)
+├── 📋 .gitignore           # Proteção máxima
+└── 🔧 main.py              # Ponto de entrada
+```
 
 ## 🚀 Início Rápido
 
