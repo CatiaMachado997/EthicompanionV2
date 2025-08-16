@@ -1,14 +1,17 @@
 # API Keys for Ethic Companion V2
 # Copy this file to .env and fill in your actual API keys
 
-# Weaviate Vector Database
-WEAVIATE_API_KEY=your_weaviate_api_key_here
-
 # Google Generative AI (Gemini)
 GOOGLE_API_KEY=your_google_api_key_here
 
 # Tavily Search API
 TAVILY_API_KEY=your_tavily_api_key_here
+
+# OpenAI API (for speech-to-text with Whisper)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Weaviate Vector Database (base64 encoded API key)
+WEAVIATE_API_KEY=your_weaviate_api_key_here
 
 # Optional: Weaviate connection settings
 WEAVIATE_HOST=localhost

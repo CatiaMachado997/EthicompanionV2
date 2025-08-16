@@ -60,6 +60,7 @@ def _load_from_secret_manager():
             "GOOGLE_API_KEY": f"projects/{project_id}/secrets/ethic-companion-google-api-key/versions/latest",
             "TAVILY_API_KEY": f"projects/{project_id}/secrets/ethic-companion-tavily-api-key/versions/latest", 
             "WEAVIATE_API_KEY": f"projects/{project_id}/secrets/ethic-companion-weaviate-api-key/versions/latest",
+            "OPENAI_API_KEY": f"projects/{project_id}/secrets/ethic-companion-openai-api-key/versions/latest",
         }
 
         # Buscar cada segredo
@@ -133,7 +134,7 @@ def validate_api_keys() -> dict:
     Returns:
         Dict com status de cada chave
     """
-    required_keys = ["GOOGLE_API_KEY", "TAVILY_API_KEY", "WEAVIATE_API_KEY"]
+    required_keys = ["GOOGLE_API_KEY", "TAVILY_API_KEY", "WEAVIATE_API_KEY", "OPENAI_API_KEY"]
     status = {}
     
     for key in required_keys:

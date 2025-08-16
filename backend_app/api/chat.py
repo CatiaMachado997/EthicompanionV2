@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from langchain.prompts import PromptTemplate
 from langchain.tools import Tool
@@ -12,6 +12,8 @@ from backend_app.core.config import get_api_key
 import os
 import logging
 from datetime import datetime
+import openai
+from typing import BinaryIO, Union
 
 # Setup logging for failed responses
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +61,80 @@ def is_failed_response(response: str) -> bool:
         "tente novamente"
     ]
     return any(phrase in response.lower() for phrase in failure_indicators)
+
+# Speech-to-text function using OpenAI Whisper API
+async def speech_to_text(audio_file: Union[BinaryIO, bytes]) -> str:
+    """
+    Convert audio file to text using OpenAI Whisper API.
+    
+    Args:
+        audio_file: Audio file stream or bytes to transcribe
+        
+    Returns:
+        str: Transcribed text from the audio
+        
+    Raises:
+        HTTPException: If API key is not configured or transcription fails
+    """
+    try:
+        # Get OpenAI API key from environment
+        try:
+            openai_api_key = get_api_key('OPENAI_API_KEY')
+            print(f"🔑 OpenAI API Key configurada: {openai_api_key[:20] if openai_api_key else 'NÃO'}")
+        except ValueError as e:
+            print(f"⚠️  OpenAI API Key não configurada: {e}")
+            raise HTTPException(
+                status_code=500, 
+                detail="OpenAI API key não configurada. Configure OPENAI_API_KEY nas variáveis de ambiente."
+            )
+        
+        # Initialize OpenAI client
+        client = openai.AsyncOpenAI(api_key=openai_api_key)
+        print("✅ OpenAI client inicializado")
+        
+        # Prepare the audio file for transcription
+        if isinstance(audio_file, bytes):
+            # If audio_file is bytes, we need to create a file-like object
+            import io
+            audio_file = io.BytesIO(audio_file)
+            audio_file.name = "audio.wav"  # Whisper needs a filename
+        
+        print("🎤 Enviando arquivo de áudio para transcrição...")
+        
+        # Send audio to Whisper API for transcription
+        transcript = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            language="pt"  # Portuguese - adjust as needed
+        )
+        
+        transcribed_text = transcript.text
+        print(f"✅ Transcrição concluída: {len(transcribed_text)} caracteres")
+        print(f"📝 Texto transcrito: {transcribed_text[:100]}...")
+        
+        return transcribed_text
+        
+    except openai.AuthenticationError:
+        error_msg = "Erro de autenticação OpenAI: Verifique se a API key está correta"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=401, detail=error_msg)
+        
+    except openai.RateLimitError:
+        error_msg = "Limite de taxa da API OpenAI excedido. Tente novamente em alguns minutos"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=429, detail=error_msg)
+        
+    except openai.APIError as e:
+        error_msg = f"Erro da API OpenAI: {str(e)}"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+        
+    except Exception as e:
+        error_msg = f"Erro inesperado na transcrição de áudio: {str(e)}"
+        print(f"❌ {error_msg}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
 
 # --- 1. Definição dos Especialistas e Ferramentas ---
 
@@ -192,14 +268,21 @@ async def execute_memory_search(question: str) -> str:
 
 # --- 2. Definição do Router ---
 
-# Inicializar o router LLM apenas se a API key estiver disponível
-router_llm = None
-try:
-    google_key = get_api_key('GOOGLE_API_KEY')
-    router_llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-except Exception as e:
-    print(f"Erro ao inicializar router LLM: {e}")
-    router_llm = None
+# Função para obter o router LLM (lazy initialization)
+def get_router_llm():
+    """Get or create the router LLM instance"""
+    global router_llm
+    if router_llm is None:
+        try:
+            google_key = get_api_key('GOOGLE_API_KEY')
+            router_llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+            print("✅ Router LLM inicializado com sucesso")
+        except Exception as e:
+            print(f"❌ Erro ao inicializar router LLM: {e}")
+            return None
+    return router_llm
+
+router_llm = None  # Will be initialized when needed
 router_prompt_template = """Given the user question, classify it as either `web_search` or `memory_search`.
 
 `web_search` is for questions about:
@@ -220,11 +303,13 @@ Question: {question}
 Classification:"""
 router_prompt = PromptTemplate.from_template(router_prompt_template)
 
-# Criar o router chain apenas se o LLM estiver disponível
-if router_llm:
-    router_chain = router_prompt | router_llm | StrOutputParser()
-else:
-    router_chain = None
+# Função para obter o router chain (lazy initialization)
+def get_router_chain():
+    """Get or create the router chain"""
+    llm = get_router_llm()
+    if llm:
+        return router_prompt | llm | StrOutputParser()
+    return None
 
 # --- 3. Lógica de Roteamento ---
 
@@ -257,16 +342,114 @@ full_branch = RunnableBranch(
     lambda x: f"Desculpe, não consegui classificar a pergunta '{x['question']}'. Pode reformular?"
 )
 
-# A cadeia completa (apenas se o router estiver disponível)
-if router_chain:
-    full_chain = {
-        "classification": router_chain, 
-        "question": RunnablePassthrough()
-    } | full_branch
-else:
-    full_chain = None
+# Função para obter a cadeia completa (lazy initialization)
+def get_full_chain():
+    """Get or create the full chain"""
+    router_chain = get_router_chain()
+    if router_chain:
+        return {
+            "classification": router_chain, 
+            "question": RunnablePassthrough()
+        } | full_branch
+    return None
 
-# --- 4. Endpoint da API Atualizado ---
+# --- 4. Endpoints da API ---
+
+# Speech-to-text endpoint with file upload
+@router.post("/speech-to-text")
+async def transcribe_audio(audio_file: UploadFile = File(...)):
+    """
+    Endpoint POST /speech-to-text para transcrever áudio em texto
+    
+    Args:
+        audio_file: Arquivo de áudio enviado via upload
+        
+    Returns:
+        dict: Dicionário com o texto transcrito
+    """
+    try:
+        print(f"🎤 Endpoint /speech-to-text chamado com arquivo: {audio_file.filename}")
+        print(f"📄 Tipo de conteúdo: {audio_file.content_type}")
+        
+        # Validate file type
+        allowed_types = [
+            "audio/wav", "audio/mp3", "audio/mpeg", "audio/mp4", 
+            "audio/webm", "audio/ogg", "audio/flac", "audio/m4a"
+        ]
+        
+        if audio_file.content_type and audio_file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Tipo de arquivo não suportado: {audio_file.content_type}. "
+                       f"Tipos permitidos: {', '.join(allowed_types)}"
+            )
+        
+        # Read file content
+        audio_content = await audio_file.read()
+        print(f"📊 Tamanho do arquivo: {len(audio_content)} bytes")
+        
+        # Create a file-like object with proper filename
+        import io
+        audio_stream = io.BytesIO(audio_content)
+        audio_stream.name = audio_file.filename or "audio.wav"
+        
+        # Transcribe audio
+        transcribed_text = await speech_to_text(audio_stream)
+        
+        return {
+            "text": transcribed_text,
+            "filename": audio_file.filename,
+            "content_type": audio_file.content_type,
+            "size_bytes": len(audio_content)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Erro no endpoint de transcrição: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Erro interno do servidor")
+
+# Voice chat endpoint - combines speech-to-text with chat
+@router.post("/voice-chat", response_model=AppResponse)
+async def handle_voice_chat(audio_file: UploadFile = File(...)):
+    """
+    Endpoint POST /voice-chat que transcreve áudio e processa através do chat
+    
+    Args:
+        audio_file: Arquivo de áudio enviado via upload
+        
+    Returns:
+        AppResponse: Resposta do chat baseada no áudio transcrito
+    """
+    try:
+        print(f"🎙️ Endpoint /voice-chat chamado com arquivo: {audio_file.filename}")
+        
+        # First, transcribe the audio
+        audio_content = await audio_file.read()
+        
+        import io
+        audio_stream = io.BytesIO(audio_content)
+        audio_stream.name = audio_file.filename or "audio.wav"
+        
+        # Transcribe speech to text
+        transcribed_text = await speech_to_text(audio_stream)
+        print(f"🎤➡️📝 Texto transcrito: {transcribed_text}")
+        
+        # Process the transcribed text through the chat system
+        user_input = UserInput(text=transcribed_text)
+        chat_response = await handle_chat(user_input)
+        
+        return chat_response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Erro no endpoint de voice chat: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Erro interno do servidor")
 
 @router.post("/chat", response_model=AppResponse)
 async def handle_chat(user_input: UserInput):
@@ -276,11 +459,15 @@ async def handle_chat(user_input: UserInput):
     print(f"🚀 Endpoint /chat chamado com: {user_input.text}")
     memory_manager = None
     try:
+        # Obter a cadeia completa (lazy initialization)
+        full_chain = get_full_chain()
+        
         # Se o router chain estiver disponível, usar roteamento inteligente
         if full_chain:
             print("🔄 Router chain disponível, usando roteamento inteligente...")
             try:
                 # First, let's test the classification directly
+                router_chain = get_router_chain()
                 if router_chain:
                     classification = await router_chain.ainvoke({"question": user_input.text})
                     print(f"🏷️  Classification result: '{classification.strip()}'")

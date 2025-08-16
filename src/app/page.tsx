@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, FormEvent } from 'react';
+import { useAudioRecorder } from '../hooks/useAudioRecorder';
 
 type Message = {
   id: string;
@@ -19,11 +20,30 @@ export default function ChatPage() {
   const [isChatMode, setIsChatMode] = useState(false);
   const [isSpeechActive, setIsSpeechActive] = useState(false);
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Audio recording hook
+  const {
+    isRecording,
+    audioBlob,
+    startRecording,
+    stopRecording,
+    error: recordingError,
+    isSupported: isAudioSupported
+  } = useAudioRecorder();
+
   useEffect(() => { setIsClient(true); }, []);
   useEffect(() => { scrollToBottom(); }, [messages]);
+
+  // Display recording errors
+  useEffect(() => {
+    if (recordingError) {
+      console.error('Recording error:', recordingError);
+      // You could show a toast notification here
+    }
+  }, [recordingError]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -86,10 +106,120 @@ export default function ChatPage() {
     setIsChatMode(false);
   };
 
-  const toggleSpeech = () => {
-    setIsSpeechActive(!isSpeechActive);
-    // Implementar funcionalidade de voz aqui
+  // Handle speech-to-text transcription
+  const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+    const formData = new FormData();
+    formData.append('audio_file', audioBlob, 'recording.webm');
+
+    try {
+      const response = await fetch('/api/speech-to-text', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result.text;
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      throw error;
+    }
   };
+
+  // Handle voice chat (transcribe + get response)
+  const handleVoiceChat = async (audioBlob: Blob) => {
+    const formData = new FormData();
+    formData.append('audio_file', audioBlob, 'recording.webm');
+
+    try {
+      const response = await fetch('/api/voice-chat', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result.response;
+    } catch (error) {
+      console.error('Error in voice chat:', error);
+      throw error;
+    }
+  };
+
+  // Handle speech button toggle
+  const toggleSpeech = async () => {
+    if (!isAudioSupported) {
+      alert('Audio recording is not supported in your browser');
+      return;
+    }
+
+    if (isRecording) {
+      // Stop recording and process
+      stopRecording();
+    } else {
+      // Start recording
+      try {
+        await startRecording();
+        setIsSpeechActive(true);
+      } catch (error) {
+        console.error('Error starting recording:', error);
+        alert('Could not start recording. Please check microphone permissions.');
+      }
+    }
+  };
+
+  // Process audio when recording stops
+  useEffect(() => {
+    if (audioBlob && !isRecording && isSpeechActive) {
+      const processAudio = async () => {
+        setIsTranscribing(true);
+        setIsSpeechActive(false);
+
+        try {
+          // Option 1: Just transcribe to text input
+          const transcribedText = await transcribeAudio(audioBlob);
+          setInputValue(transcribedText);
+
+          // Option 2: Direct voice chat (uncomment to use)
+          // const response = await handleVoiceChat(audioBlob);
+          // const userMessage: Message = {
+          //   id: Date.now().toString(),
+          //   text: transcribedText,
+          //   sender: 'user',
+          //   timestamp: new Date(),
+          // };
+          // const assistantMessage: Message = {
+          //   id: (Date.now() + 1).toString(),
+          //   text: response,
+          //   sender: 'assistant',
+          //   timestamp: new Date(),
+          // };
+          // setMessages(prev => [...prev, userMessage, assistantMessage]);
+          // setIsChatMode(true);
+
+        } catch (error) {
+          console.error('Error processing audio:', error);
+          const errorMessage: Message = {
+            id: Date.now().toString(),
+            text: 'Desculpe, ocorreu um erro ao processar o áudio. Tente novamente.',
+            sender: 'assistant',
+            timestamp: new Date(),
+          };
+          setMessages(prev => [...prev, errorMessage]);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      processAudio();
+    }
+  }, [audioBlob, isRecording, isSpeechActive]);
 
   if (!isClient) {
     return (
@@ -212,9 +342,19 @@ export default function ChatPage() {
                     <button
                       type="button"
                       onClick={toggleSpeech}
-                      className={`speech-btn ${isSpeechActive ? 'active' : ''}`}
+                      disabled={isTranscribing || !isAudioSupported}
+                      className={`speech-btn ${isRecording ? 'recording' : isSpeechActive ? 'active' : ''} ${!isAudioSupported ? 'disabled' : ''}`}
+                      title={
+                        !isAudioSupported 
+                          ? 'Audio recording not supported' 
+                          : isRecording 
+                            ? 'Click to stop recording' 
+                            : isTranscribing 
+                              ? 'Transcribing audio...' 
+                              : 'Click to start voice input'
+                      }
                     >
-                      {isSpeechActive ? '🔴' : '🎤'}
+                      {isTranscribing ? '⏳' : isRecording ? '⏹️' : '🎤'}
                     </button>
                     <button
                       type="submit"
@@ -284,9 +424,19 @@ export default function ChatPage() {
                     <button
                       type="button"
                       onClick={toggleSpeech}
-                      className={`speech-btn ${isSpeechActive ? 'active' : ''}`}
+                      disabled={isTranscribing || !isAudioSupported}
+                      className={`speech-btn ${isRecording ? 'recording' : isSpeechActive ? 'active' : ''} ${!isAudioSupported ? 'disabled' : ''}`}
+                      title={
+                        !isAudioSupported 
+                          ? 'Audio recording not supported' 
+                          : isRecording 
+                            ? 'Click to stop recording' 
+                            : isTranscribing 
+                              ? 'Transcribing audio...' 
+                              : 'Click to start voice input'
+                      }
                     >
-                      {isSpeechActive ? '🔴' : '🎤'}
+                      {isTranscribing ? '⏳' : isRecording ? '⏹️' : '🎤'}
                     </button>
                     <button
                       type="submit"
