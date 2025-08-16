@@ -17,6 +17,17 @@
 *gsk_*
 *google_api_key*
 *tavily_api_key*
+*openai_api_key*
+*weaviate_api_key*
+
+# Additional security patterns
+config/secrets*
+secrets/
+.secrets/
+*secret*
+*.pem
+*.p12
+*.pfx
 
 # Backup files (potential key exposure)
 *.backup
