@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend_app.api import router
 from backend_app.core.config import load_api_keys, validate_api_keys
+from backend_app.models.database import create_tables
 import logging
 import os
 
@@ -22,6 +23,13 @@ try:
 except Exception as e:
     logger.error(f"❌ Erro ao carregar configuração: {e}")
     # Continuar mesmo com erro para permitir debug
+
+# Initialize database tables
+try:
+    create_tables()
+    logger.info("🗄️ Database tables initialized successfully")
+except Exception as e:
+    logger.error(f"❌ Erro ao inicializar database: {e}")
 
 app = FastAPI(
     title="Chat Application API",

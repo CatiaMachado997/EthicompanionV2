@@ -11,4 +11,6 @@ duckduckgo-search
 python-dotenv
 google-cloud-secret-manager
 protobuf>=4.21.0,<6.0.0
-openai>=1.0.0 
+openai>=1.0.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0 

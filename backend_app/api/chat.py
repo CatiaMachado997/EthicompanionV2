@@ -8,11 +8,13 @@ from langchain_core.runnables import RunnableBranch, RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
 from backend_app.core.memory import VectorMemory
+from backend_app.core.memory_manager import MemoryManager
 from backend_app.core.config import get_api_key
 import os
 import logging
 from datetime import datetime
 import openai
+import uuid
 from typing import BinaryIO, Union
 
 # Setup logging for failed responses
@@ -28,9 +30,11 @@ failed_responses_logger.setLevel(logging.INFO)
 # Modelos Pydantic
 class UserInput(BaseModel):
     text: str
+    session_id: str = None  # Optional session ID, will generate if not provided
 
 class AppResponse(BaseModel):
     reply: str
+    session_id: str = None  # Return session ID to frontend
 
 router = APIRouter()
 
@@ -454,83 +458,131 @@ async def handle_voice_chat(audio_file: UploadFile = File(...)):
 @router.post("/chat", response_model=AppResponse)
 async def handle_chat(user_input: UserInput):
     """
-    Endpoint POST /chat com roteamento inteligente
+    Enhanced /chat endpoint with MemoryManager integration
+    
+    Flow:
+    1. Generate or use provided session_id
+    2. Retrieve context from MemoryManager (recent + semantic)
+    3. Process message through LangChain agent with context
+    4. Save successful conversation to MemoryManager
+    5. Return response with session_id
     """
-    print(f"🚀 Endpoint /chat chamado com: {user_input.text}")
+    print(f"� Enhanced /chat endpoint called with: {user_input.text}")
+    
+    # Generate session_id if not provided
+    session_id = user_input.session_id or str(uuid.uuid4())
+    print(f"📝 Session ID: {session_id}")
+    
     memory_manager = None
     try:
-        # Obter a cadeia completa (lazy initialization)
-        full_chain = get_full_chain()
+        # 1. Initialize MemoryManager
+        memory_manager = MemoryManager()
+        print("✅ MemoryManager initialized")
         
-        # Se o router chain estiver disponível, usar roteamento inteligente
-        if full_chain:
-            print("🔄 Router chain disponível, usando roteamento inteligente...")
-            try:
-                # First, let's test the classification directly
-                router_chain = get_router_chain()
-                if router_chain:
-                    classification = await router_chain.ainvoke({"question": user_input.text})
-                    print(f"🏷️  Classification result: '{classification.strip()}'")
-                
-                response = await full_chain.ainvoke({"question": user_input.text})
-                print(f"✅ Router funcionou, resposta: {response[:100]}...")
-            except Exception as router_error:
-                print(f"❌ Erro no router, usando fallback: {router_error}")
-                import traceback
-                traceback.print_exc()
-                response = await execute_web_search(user_input.text)
+        # 2. Get context from both memory systems
+        context = await memory_manager.get_context(
+            session_id=session_id,
+            query=user_input.text,
+            recent_message_count=5,
+            semantic_search_results=3
+        )
+        print(f"🧠 Context retrieved: {len(context)} characters")
+        
+        # 3. Process message with context through LangChain agent
+        response = await process_with_context(user_input.text, context)
+        print(f"🤖 Agent response generated: {len(response)} characters")
+        
+        # 4. Save successful conversation to memory
+        if not is_failed_response(response):
+            success = memory_manager.add_message(
+                session_id=session_id,
+                user_message=user_input.text,
+                assistant_message=response
+            )
+            if success:
+                print("💾 Conversation saved to both PostgreSQL and Weaviate")
+            else:
+                print("⚠️ Conversation save partially failed but continuing")
         else:
-            # Fallback para web search simples
-            print("🔄 Router chain não disponível, usando web search direto...")
-            response = await execute_web_search(user_input.text)
+            # Log failed responses but don't store in memory
+            log_failed_response(user_input.text, response, "FAILED_AGENT_RESPONSE")
+            print("🚫 Failed response logged, not stored in memory")
         
-        print(f"📝 Resposta final gerada: {len(response)} caracteres")
-        
-        # Check if this is a failed response
-        if is_failed_response(response):
-            # Log failed responses to file, don't store in memory
-            log_failed_response(user_input.text, response, "MEMORY_SEARCH_FAILED")
-            print(f"🚫 Failed response logged to file, not stored in memory")
-        else:
-            # Store successful interactions in memory
-            try:
-                memory_manager = VectorMemory()
-                full_interaction = f"User: {user_input.text}\nAssistant: {response}"
-                memory_manager.add_memory(full_interaction)
-                print(f"💾 Successful interaction stored in memory")
-            except Exception as memory_error:
-                print(f"Erro ao conectar com memória (opcional): {memory_error}")
-                log_failed_response(user_input.text, response, "MEMORY_STORAGE_ERROR")
-                # Continue sem memória se houver erro
-        
-        return AppResponse(reply=response)
+        # 5. Return response with session_id
+        return AppResponse(reply=response, session_id=session_id)
         
     except Exception as e:
-        print(f"Erro no endpoint /chat: {e}")
-        error_message = "Desculpe, ocorreu um erro ao processar sua solicitação. Tente novamente."
+        print(f"❌ Error in enhanced chat endpoint: {e}")
+        import traceback
+        traceback.print_exc()
         
-        # Log the error
+        error_message = "Desculpe, ocorreu um erro ao processar sua solicitação. Tente novamente."
         log_failed_response(user_input.text, str(e), "ENDPOINT_ERROR")
         
-        # Se falhar, usar apenas o LLM diretamente
+        # Fallback to simple LLM response
         try:
             from backend_app.core.llm import get_llm_response
             response = get_llm_response(user_input.text)
             
-            # Check if the fallback response is also a failure
+            # Don't save fallback responses to memory
             if is_failed_response(response):
                 log_failed_response(user_input.text, response, "LLM_FALLBACK_FAILED")
             
-            return AppResponse(reply=response)
+            return AppResponse(reply=response, session_id=session_id)
+            
         except Exception as llm_error:
-            print(f"Erro no LLM: {llm_error}")
+            print(f"❌ LLM fallback also failed: {llm_error}")
             log_failed_response(user_input.text, str(llm_error), "LLM_ERROR")
-            return AppResponse(reply=error_message)
+            return AppResponse(reply=error_message, session_id=session_id)
     
     finally:
-        # Garantir que a conexão com Weaviate seja fechada
+        # Clean up MemoryManager connections
         if memory_manager:
             try:
                 memory_manager.close()
             except Exception as e:
-                print(f"Erro ao fechar conexão Weaviate: {e}")
+                print(f"❌ Error closing MemoryManager: {e}")
+
+async def process_with_context(user_message: str, context: str) -> str:
+    """
+    Process user message with context through the LangChain routing system
+    
+    Args:
+        user_message: The user's input
+        context: Combined context from MemoryManager
+        
+    Returns:
+        str: Agent's response
+    """
+    try:
+        # Enhanced prompt that includes context
+        contextual_message = f"""
+        Context from previous conversations:
+        {context}
+        
+        Current user message: {user_message}
+        
+        Please provide a helpful response considering both the current message and the conversation context.
+        """
+        
+        # Try to use the full chain with routing
+        full_chain = get_full_chain()
+        if full_chain:
+            print("🔄 Using intelligent routing with context...")
+            try:
+                response = await full_chain.ainvoke({"question": contextual_message})
+                print("✅ Routing with context successful")
+                return response
+            except Exception as router_error:
+                print(f"❌ Router with context failed: {router_error}")
+                # Fallback to web search with context
+                return await execute_web_search(contextual_message)
+        else:
+            # Direct web search with context
+            print("🔄 Using direct web search with context...")
+            return await execute_web_search(contextual_message)
+            
+    except Exception as e:
+        print(f"❌ Error processing with context: {e}")
+        # Final fallback without context
+        return await execute_web_search(user_message)
