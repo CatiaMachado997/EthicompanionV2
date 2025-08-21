@@ -1,0 +1,47 @@
+# Python files to ignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.env
+.env.*
+venv/
+env/
+
+# Node.js files
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Documentation
+*.md
+!README.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Development files
+docker-compose.dev.yml
+docker-compose.yml
+*.log
+failed_responses.log
+
+# Deployment scripts
+deploy*.sh
+*.md
