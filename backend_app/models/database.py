@@ -13,14 +13,15 @@ Base = declarative_base()
 class ChatHistory(Base):
     """
     Model for storing chat history in PostgreSQL
-    Stores individual messages with session information
+    Compatible with hybrid memory system - stores individual messages
     """
     __tablename__ = "chat_history"
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String(255), nullable=False, index=True)
     message_type = Column(String(50), nullable=False)  # 'user' or 'assistant'
-    message_text = Column(Text, nullable=False)
+    user_message = Column(Text, nullable=True)  # For user messages
+    assistant_message = Column(Text, nullable=True)  # For assistant responses
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
     processed = Column(Boolean, default=False)  # For tracking if stored in vector DB
     
@@ -53,16 +54,23 @@ def create_tables():
     """Create all database tables"""
     Base.metadata.create_all(bind=engine)
 
-def get_db_session():
+def get_db():
     """
-    Dependency to get database session
-    Use this in FastAPI endpoints
+    FastAPI dependency to get database session
+    Ensures proper session management and cleanup
     """
     db = SessionLocal()
     try:
-        return db
+        yield db
     finally:
-        pass  # Session will be closed by the caller
+        db.close()
+
+def get_db_session():
+    """
+    Direct method to get database session (for non-FastAPI usage)
+    Remember to close the session manually
+    """
+    return SessionLocal()
 
 def close_db_session(db):
     """Close database session"""

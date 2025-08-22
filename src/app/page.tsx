@@ -2,25 +2,49 @@
 
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
+import { useHybridMemoryChat } from '../hooks/useHybridMemoryChat';
+import { MemoryStatsPanel, MemoryStatusBadge } from '../components/MemoryStatsPanel';
+import { ContextModeSelector, ContextModeBadge } from '../components/ContextModeSelector';
+import { MessageList, TypingIndicator } from '../components/EnhancedMessage';
 
-type Message = {
-  id: string;
-  text: string;
-  sender: 'user' | 'assistant';
-  timestamp: Date;
-};
+// Função para gerar UUID simples (substitui dependência uuid)
+function generateSessionId(): string {
+  return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Estados do chat híbrido
+  const {
+    messages,
+    isLoading,
+    error,
+    sessionId,
+    memoryStats,
+    contextInfo,
+    sendMessage,
+    clearMessages,
+    refreshMemoryStats,
+    startNewSession,
+    setContextMode,
+    contextMode
+  } = useHybridMemoryChat({
+    sessionId: generateSessionId(),
+    contextMode: 'hybrid',
+    apiBaseUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  });
+
+  // Estados da UI
   const [inputValue, setInputValue] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const [activeChat, setActiveChat] = useState('current');
-  const [selectedModel, setSelectedModel] = useState('gpt5');
+  const [selectedModel, setSelectedModel] = useState('hybrid-memory');
   const [isChatMode, setIsChatMode] = useState(false);
   const [isSpeechActive, setIsSpeechActive] = useState(false);
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false);
+  const [showContextDetails, setShowContextDetails] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -49,59 +73,24 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Função de envio usando o hook de memória híbrida
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!inputValue.trim() || isLoading) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputValue,
-      sender: 'user',
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, userMessage]);
+    const messageText = inputValue;
     setInputValue('');
-    setIsLoading(true);
     setIsChatMode(true); // Activate chat mode when first message is sent
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: inputValue, // Changed from message to text
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: data.response,
-          sender: 'assistant',
-          timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        throw new Error('Failed to get response');
-      }
+      await sendMessage(messageText);
     } catch (error) {
-      console.error('Error:', error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: 'Desculpe, ocorreu um erro. Tente novamente.',
-        sender: 'assistant',
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
+      console.error('Error sending message:', error);
     }
   };
 
   const handleNewChat = () => {
-    setMessages([]);
+    startNewSession();
     setActiveChat('current');
     setIsChatMode(false);
   };
@@ -182,36 +171,13 @@ export default function ChatPage() {
         setIsSpeechActive(false);
 
         try {
-          // Option 1: Just transcribe to text input
+          // Transcribe audio to text input
           const transcribedText = await transcribeAudio(audioBlob);
           setInputValue(transcribedText);
 
-          // Option 2: Direct voice chat (uncomment to use)
-          // const response = await handleVoiceChat(audioBlob);
-          // const userMessage: Message = {
-          //   id: Date.now().toString(),
-          //   text: transcribedText,
-          //   sender: 'user',
-          //   timestamp: new Date(),
-          // };
-          // const assistantMessage: Message = {
-          //   id: (Date.now() + 1).toString(),
-          //   text: response,
-          //   sender: 'assistant',
-          //   timestamp: new Date(),
-          // };
-          // setMessages(prev => [...prev, userMessage, assistantMessage]);
-          // setIsChatMode(true);
-
         } catch (error) {
           console.error('Error processing audio:', error);
-          const errorMessage: Message = {
-            id: Date.now().toString(),
-            text: 'Desculpe, ocorreu um erro ao processar o áudio. Tente novamente.',
-            sender: 'assistant',
-            timestamp: new Date(),
-          };
-          setMessages(prev => [...prev, errorMessage]);
+          // Handle error through the hook's error system
         } finally {
           setIsTranscribing(false);
         }
@@ -305,21 +271,86 @@ export default function ChatPage() {
       {/* Main Content */}
       <div className="main-content">
         <div className="top-bar">
-          <button className="bg-gradient-to-r from-coral to-pink text-white px-4 py-2 rounded-2xl font-medium hover:shadow-lg transition-all duration-300 border border-white/20">
-            ✨ Upgrade
-          </button>
+          <div className="flex items-center gap-4">
+            {/* Memory Status Badge */}
+            <MemoryStatusBadge 
+              memoryStats={memoryStats}
+              contextInfo={contextInfo}
+            />
+            
+            {/* Context Mode Badge */}
+            <ContextModeBadge 
+              mode={contextMode || 'hybrid'}
+              onClick={() => setShowMemoryPanel(!showMemoryPanel)}
+            />
+            
+            {/* Session ID (for debugging) */}
+            <span className="text-xs text-gray-500">
+              Sessão: {sessionId.slice(-8)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Memory Panel Toggle */}
+            <button
+              onClick={() => setShowMemoryPanel(!showMemoryPanel)}
+              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
+              title="Mostrar/ocultar painel de memória"
+            >
+              🧠
+            </button>
+            
+            {/* Context Details Toggle */}
+            <button
+              onClick={() => setShowContextDetails(!showContextDetails)}
+              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
+              title="Mostrar/ocultar detalhes de contexto"
+            >
+              📊
+            </button>
+
+            <button className="bg-gradient-to-r from-coral to-pink text-white px-4 py-2 rounded-2xl font-medium hover:shadow-lg transition-all duration-300 border border-white/20">
+              ✨ Upgrade
+            </button>
+          </div>
         </div>
+
+        {/* Memory Panel (when expanded) */}
+        {showMemoryPanel && (
+          <div className="mb-4">
+            <MemoryStatsPanel
+              memoryStats={memoryStats}
+              contextInfo={contextInfo}
+              onRefresh={refreshMemoryStats}
+              className="mb-4"
+            />
+            <ContextModeSelector
+              currentMode={contextMode || 'hybrid'}
+              onChange={setContextMode}
+              disabled={isLoading}
+            />
+          </div>
+        )}
 
         {!isChatMode && messages.length === 0 ? (
           <div className="welcome-screen">
             <div className="welcome-content">
-              <h1 className="welcome-greeting">Hello, Catia</h1>
+              <h1 className="welcome-greeting">Olá, Catia</h1>
               <p className="welcome-question">
-                How can I help you today? How are you feeling and doing?
+                Como posso ajudar-te hoje com questões éticas ou reflexões pessoais?
               </p>
               
               {/* Mandala Symbol */}
               <div className="mandala-symbol"></div>
+              
+              {/* Context Mode Selector (prominent) */}
+              <div className="mb-6">
+                <ContextModeSelector
+                  currentMode={contextMode || 'hybrid'}
+                  onChange={setContextMode}
+                  disabled={isLoading}
+                />
+              </div>
               
               {/* Input Section - Centralizado e Prominente */}
               <div className="input-section">
@@ -328,7 +359,7 @@ export default function ChatPage() {
                     ref={textareaRef}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Mensagem para Ethic Companion..."
+                    placeholder="Partilha um dilema ético ou uma reflexão pessoal..."
                     className="input-textarea"
                     rows={1}
                     onKeyDown={(e) => {
@@ -371,35 +402,25 @@ export default function ChatPage() {
         ) : (
           <>
             <div className="messages-area">
-              {messages.map((message) => (
-                <div key={message.id} className={`message ${message.sender}`}>
-                  <div className="message-container">
-                    <div className="message-bubble">
-                      <div className="message-text">{message.text}</div>
-                      <div className="message-meta">
-                        <span className="message-time">
-                          {message.timestamp.toLocaleTimeString()}
-                        </span>
-                        <div className="message-actions">
-                          <button className="action-btn">📋</button>
-                          <button className="action-btn">🔄</button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="loading-indicator">
-                  <div className="loading-bubble">
-                    <div className="typing-dots">
-                      <div className="typing-dot"></div>
-                      <div className="typing-dot"></div>
-                      <div className="typing-dot"></div>
-                    </div>
-                  </div>
+              {/* Error Display */}
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  ❌ {error}
                 </div>
               )}
+
+              {/* Messages with enhanced context display */}
+              <MessageList
+                messages={messages}
+                lastContextInfo={contextInfo}
+                showContextDetails={showContextDetails}
+              />
+
+              {/* Typing Indicator */}
+              {isLoading && (
+                <TypingIndicator contextMode={contextMode} />
+              )}
+
               <div ref={messagesEndRef} />
             </div>
 
@@ -410,7 +431,7 @@ export default function ChatPage() {
                     ref={textareaRef}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Mensagem para Ethic Companion..."
+                    placeholder="Continua a conversa..."
                     className="input-textarea"
                     rows={1}
                     onKeyDown={(e) => {
@@ -459,9 +480,9 @@ export default function ChatPage() {
               onChange={(e) => setSelectedModel(e.target.value)}
               className="model-dropdown"
             >
-              <option value="gpt5">GPT-5</option>
-              <option value="gpt4">GPT-4</option>
-              <option value="gpt3">GPT-3.5</option>
+              <option value="hybrid-memory">🧠 Memória Híbrida</option>
+              <option value="gpt4">GPT-4 Simples</option>
+              <option value="gemini">Gemini Pro</option>
             </select>
           </div>
           <div className="temporary-chat">
