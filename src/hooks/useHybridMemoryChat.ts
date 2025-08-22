@@ -21,6 +21,20 @@ export interface Message {
   sender: 'user' | 'assistant';
   timestamp: Date;
   sessionId?: string;
+  isStreaming?: boolean;  // Nova propriedade para indicar streaming
+  isComplete?: boolean;   // Nova propriedade para indicar se está completa
+}
+
+export interface StreamChunk {
+  type: 'metadata' | 'context' | 'content' | 'complete' | 'error';
+  chunk?: string;
+  accumulated?: string;
+  session_id?: string;
+  timestamp?: string;
+  context_info?: any;
+  memory_stats?: any;
+  final_response?: string;
+  message?: string;
 }
 
 export interface ChatResponse {
@@ -73,6 +87,7 @@ export interface ChatHookReturn {
   
   // Funções principais
   sendMessage: (message: string) => Promise<void>;
+  sendMessageWithStreaming: (message: string) => Promise<void>;  // Nova função
   clearMessages: () => void;
   refreshMemoryStats: () => Promise<void>;
   
@@ -136,7 +151,178 @@ export function useHybridMemoryChat(options: ChatHookOptions = {}): ChatHookRetu
     return response.json();
   }, [apiBaseUrl]);
 
-  // Função principal para enviar mensagens
+  // Função principal para enviar mensagens com streaming
+  const sendMessageWithStreaming = useCallback(async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return;
+
+    // Cancelar request anterior se existir
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setIsLoading(true);
+    setError(null);
+
+    // Adicionar mensagem do utilizador imediatamente
+    const userMessage: Message = {
+      id: generateUUID(),
+      text: messageText,
+      sender: 'user',
+      timestamp: new Date(),
+      sessionId,
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+
+    // Criar mensagem temporária do assistente para streaming
+    const assistantMessageId = generateUUID();
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      text: '',
+      sender: 'assistant',
+      timestamp: new Date(),
+      sessionId,
+      isStreaming: true,
+      isComplete: false,
+    };
+
+    setMessages(prev => [...prev, assistantMessage]);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/message/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          message: messageText,
+          session_id: sessionId,
+          context_mode: contextMode,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Stream não disponível');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const chunk: StreamChunk = JSON.parse(line.slice(6));
+              
+              switch (chunk.type) {
+                case 'metadata':
+                  if (chunk.session_id && chunk.session_id !== sessionId) {
+                    setSessionId(chunk.session_id);
+                  }
+                  break;
+
+                case 'context':
+                  if (chunk.context_info) {
+                    setContextInfo(chunk.context_info);
+                  }
+                  break;
+
+                case 'content':
+                  // Atualizar mensagem com novo chunk
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === assistantMessageId 
+                      ? { ...msg, text: chunk.accumulated || msg.text + (chunk.chunk || '') }
+                      : msg
+                  ));
+                  break;
+
+                case 'complete':
+                  // Finalizar mensagem
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === assistantMessageId 
+                      ? { 
+                          ...msg, 
+                          text: chunk.final_response || msg.text,
+                          isStreaming: false,
+                          isComplete: true,
+                          timestamp: new Date(chunk.timestamp || Date.now()),
+                          sessionId: chunk.session_id || msg.sessionId
+                        }
+                      : msg
+                  ));
+
+                  if (chunk.context_info) {
+                    setContextInfo(chunk.context_info);
+                  }
+                  if (chunk.memory_stats) {
+                    setMemoryStats({
+                      stats: chunk.memory_stats,
+                      status: 'success'
+                    });
+                  }
+                  break;
+
+                case 'error':
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === assistantMessageId 
+                      ? { 
+                          ...msg, 
+                          text: chunk.message || 'Erro ao processar mensagem',
+                          isStreaming: false,
+                          isComplete: true
+                        }
+                      : msg
+                  ));
+                  setError(chunk.message || 'Erro desconhecido');
+                  break;
+              }
+            } catch (parseError) {
+              console.warn('Erro ao fazer parse do chunk:', parseError);
+            }
+          }
+        }
+      }
+
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        return;
+      }
+
+      setError(`Erro ao enviar mensagem: ${error.message}`);
+      
+      // Atualizar mensagem do assistente com erro
+      setMessages(prev => prev.map(msg => 
+        msg.id === assistantMessageId 
+          ? { 
+              ...msg, 
+              text: 'Desculpa, não consegui processar a tua mensagem. Tenta novamente.',
+              isStreaming: false,
+              isComplete: true
+            }
+          : msg
+      ));
+    } finally {
+      setIsLoading(false);
+      abortControllerRef.current = null;
+    }
+  }, [apiBaseUrl, sessionId, contextMode, isLoading]);
+
+  // Função original (fallback)
   const sendMessage = useCallback(async (messageText: string) => {
     if (!messageText.trim() || isLoading) return;
 
@@ -302,6 +488,7 @@ export function useHybridMemoryChat(options: ChatHookOptions = {}): ChatHookRetu
     
     // Funções principais
     sendMessage,
+    sendMessageWithStreaming,  // Nova função de streaming
     clearMessages,
     refreshMemoryStats,
     

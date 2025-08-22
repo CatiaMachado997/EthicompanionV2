@@ -9,10 +9,13 @@ load_dotenv()
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import weaviate
 import logging
-from typing import Dict, Any
+import json
+import asyncio
+from typing import Dict, Any, AsyncGenerator
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
@@ -152,6 +155,145 @@ async def chat_with_memory(
             status_code=500,
             detail="Erro interno do servidor. Tenta novamente."
         )
+
+@chat_router.post("/message/stream")
+async def chat_with_memory_stream(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    memory_manager: MemoryManager = Depends(get_memory_manager),
+    ai_agent = Depends(get_ai_agent)
+):
+    """
+    Endpoint de chat com streaming para respostas em tempo real
+    Retorna chunks de resposta conforme são gerados pelo AI
+    """
+    
+    async def generate_stream() -> AsyncGenerator[str, None]:
+        try:
+            # 1. GESTÃO DE SESSÃO
+            session_id = request.session_id or str(uuid.uuid4())
+            timestamp = datetime.now()
+            
+            logger.info(f"🌊 Nova mensagem streaming - Sessão: {session_id}")
+            
+            # Enviar metadata inicial
+            metadata = {
+                "type": "metadata",
+                "session_id": session_id,
+                "timestamp": timestamp.isoformat(),
+                "status": "processing"
+            }
+            yield f"data: {json.dumps(metadata)}\n\n"
+            
+            # 2. RECUPERAR CONTEXTO DA MEMÓRIA
+            context = ""
+            context_info = {"type": "none", "recent_count": 0, "semantic_count": 0}
+            
+            if request.context_mode in ["hybrid", "recent_only", "semantic_only"]:
+                try:
+                    context = await memory_manager.get_context(
+                        session_id=session_id,
+                        query=request.message
+                    )
+                    context_info = _analyze_context(context)
+                    logger.info(f"🧠 Contexto recuperado para stream: {context_info}")
+                    
+                    # Enviar info do contexto
+                    context_data = {
+                        "type": "context",
+                        "context_info": context_info
+                    }
+                    yield f"data: {json.dumps(context_data)}\n\n"
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao recuperar contexto: {e}")
+                    context = "Contexto de memória não disponível."
+            
+            # 3. PREPARAR PROMPT
+            enhanced_prompt = _build_enhanced_prompt(request.message, context, request.context_mode)
+            
+            # 4. PROCESSAR COM AGENTE AI E STREAM
+            try:
+                # Simular streaming por agora (mais tarde integrar com streaming real do LLM)
+                ai_response = await ai_agent.process_message(
+                    message=enhanced_prompt,
+                    session_id=session_id
+                )
+                
+                if not ai_response or not ai_response.get("response"):
+                    raise Exception("Resposta vazia do agente AI")
+                
+                assistant_message = ai_response["response"]
+                
+                # Simular streaming dividindo a resposta em chunks
+                words = assistant_message.split()
+                chunk_size = 3  # palavras por chunk
+                
+                accumulated_response = ""
+                
+                for i in range(0, len(words), chunk_size):
+                    chunk_words = words[i:i + chunk_size]
+                    chunk_text = " ".join(chunk_words)
+                    accumulated_response += chunk_text + " "
+                    
+                    chunk_data = {
+                        "type": "content",
+                        "chunk": chunk_text + " ",
+                        "accumulated": accumulated_response.strip()
+                    }
+                    yield f"data: {json.dumps(chunk_data)}\n\n"
+                    
+                    # Pequena pausa para simular processamento
+                    await asyncio.sleep(0.1)
+                
+                # 5. GUARDAR CONVERSA EM BACKGROUND
+                background_tasks.add_task(
+                    _save_conversation_background,
+                    memory_manager,
+                    session_id,
+                    request.message,
+                    assistant_message
+                )
+                
+                # 6. OBTER ESTATÍSTICAS FINAIS
+                memory_stats = memory_manager.get_memory_stats()
+                
+                # Enviar dados finais
+                final_data = {
+                    "type": "complete",
+                    "session_id": session_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "context_used": context_info,
+                    "memory_stats": memory_stats,
+                    "final_response": assistant_message
+                }
+                yield f"data: {json.dumps(final_data)}\n\n"
+                
+            except Exception as e:
+                logging.error(f"❌ ERRO NO STREAMING: {e}", exc_info=True)
+                error_data = {
+                    "type": "error",
+                    "message": "Desculpa, tive dificuldades em processar a tua mensagem. Podes tentar novamente?"
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+                
+        except Exception as e:
+            logging.error(f"❌ ERRO CRÍTICO NO STREAMING: {e}", exc_info=True)
+            error_data = {
+                "type": "error",
+                "message": "Erro interno do servidor. Tenta novamente."
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/plain; charset=utf-8"
+        }
+    )
 
 @chat_router.get("/memory/stats", response_model=MemoryStatsResponse)
 async def get_memory_statistics(

@@ -2,10 +2,36 @@
 
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
-import { useHybridMemoryChat } from '../hooks/useHybridMemoryChat';
+import { useHybridMemoryChat, Message } from '../hooks/useHybridMemoryChat';
 import { MemoryStatsPanel, MemoryStatusBadge } from '../components/MemoryStatsPanel';
 import { ContextModeSelector, ContextModeBadge } from '../components/ContextModeSelector';
-import { MessageList, TypingIndicator } from '../components/EnhancedMessage';
+
+// Importações Material-UI
+import { 
+  Box, 
+  TextField, 
+  Switch, 
+  FormControlLabel, 
+  Grid, 
+  Paper,
+  Typography,
+  Divider,
+  Stack,
+} from '@mui/material';
+import { EarthyThemeProvider } from '../theme/EarthyThemeProvider';
+import {
+  EthicHeader,
+  MainContainer,
+  ChatCard,
+  MessagesContainer,
+  UserMessage,
+  AssistantMessage,
+  ThinkingIndicator as MaterialThinkingIndicator,
+  InputArea,
+  SendButton,
+  AudioButton,
+  ConnectionStatus,
+} from '../components/MaterialUIComponents';
 
 // Função para gerar UUID simples (substitui dependência uuid)
 function generateSessionId(): string {
@@ -22,6 +48,7 @@ export default function ChatPage() {
     memoryStats,
     contextInfo,
     sendMessage,
+    sendMessageWithStreaming,  // Nova função de streaming
     clearMessages,
     refreshMemoryStats,
     startNewSession,
@@ -44,28 +71,33 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [showContextDetails, setShowContextDetails] = useState(false);
+  const [useStreaming, setUseStreaming] = useState(true);  // Nova opção para streaming
   
+  // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Audio recording hook
+  // Audio recording with error handling
   const {
     isRecording,
     audioBlob,
     startRecording,
     stopRecording,
-    error: recordingError,
-    isSupported: isAudioSupported
+    isSupported: isAudioSupported,
+    error: recordingError
   } = useAudioRecorder();
 
-  useEffect(() => { setIsClient(true); }, []);
-  useEffect(() => { scrollToBottom(); }, [messages]);
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
-  // Display recording errors
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
   useEffect(() => {
     if (recordingError) {
       console.error('Recording error:', recordingError);
-      // You could show a toast notification here
     }
   }, [recordingError]);
 
@@ -83,7 +115,12 @@ export default function ChatPage() {
     setIsChatMode(true); // Activate chat mode when first message is sent
 
     try {
-      await sendMessage(messageText);
+      // Usar streaming ou método tradicional baseado na preferência
+      if (useStreaming) {
+        await sendMessageWithStreaming(messageText);
+      } else {
+        await sendMessage(messageText);
+      }
     } catch (error) {
       console.error('Error sending message:', error);
     }
@@ -113,73 +150,41 @@ export default function ChatPage() {
       const result = await response.json();
       return result.text;
     } catch (error) {
-      console.error('Error transcribing audio:', error);
+      console.error('Transcription error:', error);
       throw error;
     }
   };
 
-  // Handle voice chat (transcribe + get response)
-  const handleVoiceChat = async (audioBlob: Blob) => {
-    const formData = new FormData();
-    formData.append('audio_file', audioBlob, 'recording.webm');
-
-    try {
-      const response = await fetch('/api/voice-chat', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      return result.response;
-    } catch (error) {
-      console.error('Error in voice chat:', error);
-      throw error;
-    }
-  };
-
-  // Handle speech button toggle
-  const toggleSpeech = async () => {
+  const toggleSpeech = () => {
     if (!isAudioSupported) {
-      alert('Audio recording is not supported in your browser');
+      console.warn('Audio recording not supported in this browser');
       return;
     }
 
     if (isRecording) {
-      // Stop recording and process
       stopRecording();
+      setIsSpeechActive(false);
     } else {
-      // Start recording
-      try {
-        await startRecording();
-        setIsSpeechActive(true);
-      } catch (error) {
-        console.error('Error starting recording:', error);
-        alert('Could not start recording. Please check microphone permissions.');
-      }
+      startRecording();
+      setIsSpeechActive(true);
     }
   };
 
-  // Process audio when recording stops
+  // Audio blob processing
   useEffect(() => {
-    if (audioBlob && !isRecording && isSpeechActive) {
+    if (audioBlob && !isRecording) {
       const processAudio = async () => {
-        setIsTranscribing(true);
-        setIsSpeechActive(false);
-
         try {
-          // Transcribe audio to text input
-          const transcribedText = await transcribeAudio(audioBlob);
-          setInputValue(transcribedText);
-
+          setIsTranscribing(true);
+          const transcription = await transcribeAudio(audioBlob);
+          if (transcription.trim()) {
+            setInputValue(prev => prev + transcription);
+          }
         } catch (error) {
           console.error('Error processing audio:', error);
-          // Handle error through the hook's error system
         } finally {
           setIsTranscribing(false);
+          setIsSpeechActive(false);
         }
       };
 
@@ -187,313 +192,177 @@ export default function ChatPage() {
     }
   }, [audioBlob, isRecording, isSpeechActive]);
 
+  // Renderizar mensagens com componentes Material-UI
+  const renderMessages = () => {
+    return messages.map((msg: Message, index: number) => {
+      const timestamp = new Date(msg.timestamp || Date.now()).toLocaleTimeString('pt-PT', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      if (msg.sender === 'user') {
+        return (
+          <UserMessage 
+            key={index}
+            message={msg.text}
+            timestamp={timestamp}
+          />
+        );
+      } else {
+        return (
+          <AssistantMessage
+            key={index}
+            message={msg.text}
+            timestamp={timestamp}
+            isStreaming={msg.isStreaming}
+          />
+        );
+      }
+    });
+  };
+
   if (!isClient) {
-    return (
-      <div className="main-layout">
-        <div className="loading-indicator">
-          <div className="loading-bubble">
-            <div className="typing-dots">
-              <div className="typing-dot"></div>
-              <div className="typing-dot"></div>
-              <div className="typing-dot"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return null; // Avoid hydration mismatch
   }
 
   return (
-    <div className={`main-layout ${isChatMode ? 'chat-mode' : ''}`}>
-      {/* Sidebar */}
-      <div className="sidebar">
-        <div className="user-settings">
-          <div className="user-info">
-            <div className="user-avatar">CM</div>
-            <div className="user-details">
-              <div className="user-name">Catia Machado</div>
-              <div className="user-status">Premium</div>
-            </div>
-          </div>
-          <button className="settings-btn">⚙️</button>
-        </div>
+    <EarthyThemeProvider>
+      <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+        {/* Header */}
+        <EthicHeader />
 
-        <button className="new-chat-btn" onClick={handleNewChat}>
-          <span className="new-chat-icon">✏️</span>
-          <span className="new-chat-text">Nova Conversa</span>
-        </button>
-
-        <div className="chat-history">
-          <div className="section-title">Conversas Recentes</div>
-          <div className="chat-item">
-            <span className="chat-icon">💬</span>
-            <span className="chat-text">Alinhar face e ombros</span>
-          </div>
-          <div className="chat-item">
-            <span className="chat-icon">💬</span>
-            <span className="chat-text">L5 vs SE III</span>
-          </div>
-          <div className="chat-item">
-            <span className="chat-icon">💬</span>
-            <span className="chat-text">Esquema de tricô explicado</span>
-          </div>
-        </div>
-
-        <div className="my-gpts">
-          <div className="section-title">Meus GPTs</div>
-          <div className="chat-item">
-            <span className="chat-icon ethic-companion">🤖</span>
-            <span className="chat-text">Ethic Companion</span>
-          </div>
-          <div className="chat-item">
-            <span className="chat-icon personal-assistant">👤</span>
-            <span className="chat-text">Assistente Pessoal</span>
-          </div>
-          <div className="chat-item">
-            <span className="chat-icon study-helper">📚</span>
-            <span className="chat-text">Ajudante de Estudo</span>
-          </div>
-        </div>
-
-        <div className="other-functionalities">
-          <div className="section-title">Outras Funcionalidades</div>
-          <div className="chat-item">
-            <span className="functionality-icon">🔍</span>
-            <span className="functionality-text">Pesquisa na Web</span>
-          </div>
-          <div className="chat-item">
-            <span className="functionality-icon">📊</span>
-            <span className="functionality-text">Análise de Dados</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="main-content">
-        <div className="top-bar">
-          <div className="flex items-center gap-4">
-            {/* Memory Status Badge */}
-            <MemoryStatusBadge 
-              memoryStats={memoryStats}
-              contextInfo={contextInfo}
-            />
-            
-            {/* Context Mode Badge */}
-            <ContextModeBadge 
-              mode={contextMode || 'hybrid'}
-              onClick={() => setShowMemoryPanel(!showMemoryPanel)}
-            />
-            
-            {/* Session ID (for debugging) */}
-            <span className="text-xs text-gray-500">
-              Sessão: {sessionId.slice(-8)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Memory Panel Toggle */}
-            <button
-              onClick={() => setShowMemoryPanel(!showMemoryPanel)}
-              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
-              title="Mostrar/ocultar painel de memória"
-            >
-              🧠
-            </button>
-            
-            {/* Context Details Toggle */}
-            <button
-              onClick={() => setShowContextDetails(!showContextDetails)}
-              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded"
-              title="Mostrar/ocultar detalhes de contexto"
-            >
-              📊
-            </button>
-
-            <button className="bg-gradient-to-r from-coral to-pink text-white px-4 py-2 rounded-2xl font-medium hover:shadow-lg transition-all duration-300 border border-white/20">
-              ✨ Upgrade
-            </button>
-          </div>
-        </div>
-
-        {/* Memory Panel (when expanded) */}
-        {showMemoryPanel && (
-          <div className="mb-4">
-            <MemoryStatsPanel
-              memoryStats={memoryStats}
-              contextInfo={contextInfo}
-              onRefresh={refreshMemoryStats}
-              className="mb-4"
-            />
-            <ContextModeSelector
-              currentMode={contextMode || 'hybrid'}
-              onChange={setContextMode}
-              disabled={isLoading}
-            />
-          </div>
-        )}
-
-        {!isChatMode && messages.length === 0 ? (
-          <div className="welcome-screen">
-            <div className="welcome-content">
-              <h1 className="welcome-greeting">Olá, Catia</h1>
-              <p className="welcome-question">
-                Como posso ajudar-te hoje com questões éticas ou reflexões pessoais?
-              </p>
-              
-              {/* Mandala Symbol */}
-              <div className="mandala-symbol"></div>
-              
-              {/* Context Mode Selector (prominent) */}
-              <div className="mb-6">
+        {/* Container Principal */}
+        <MainContainer maxWidth="lg">
+          <Box sx={{ display: 'flex', gap: 3, flexDirection: { xs: 'column', md: 'row' } }}>
+            {/* Painel Lateral de Memória */}
+            <Box sx={{ flex: '0 0 300px', width: { xs: '100%', md: '300px' } }}>
+              <Paper elevation={2} sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Memória do Sistema
+                </Typography>
+                <MemoryStatusBadge 
+                  memoryStats={memoryStats}
+                  contextInfo={contextInfo}
+                />
+                <Divider sx={{ my: 2 }} />
                 <ContextModeSelector
                   currentMode={contextMode || 'hybrid'}
                   onChange={setContextMode}
-                  disabled={isLoading}
                 />
-              </div>
-              
-              {/* Input Section - Centralizado e Prominente */}
-              <div className="input-section">
-                <form onSubmit={handleSubmit} className="input-container">
-                  <textarea
-                    ref={textareaRef}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Partilha um dilema ético ou uma reflexão pessoal..."
-                    className="input-textarea"
-                    rows={1}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSubmit(e);
-                      }
-                    }}
+              </Paper>
+
+              {/* Configurações de Chat */}
+              <Paper elevation={2} sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Configurações
+                </Typography>
+                <Stack spacing={2}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={useStreaming}
+                        onChange={(e) => setUseStreaming(e.target.checked)}
+                        color="primary"
+                      />
+                    }
+                    label="Respostas em Tempo Real"
                   />
-                  <div className="input-actions">
-                    <button
-                      type="button"
-                      onClick={toggleSpeech}
-                      disabled={isTranscribing || !isAudioSupported}
-                      className={`speech-btn ${isRecording ? 'recording' : isSpeechActive ? 'active' : ''} ${!isAudioSupported ? 'disabled' : ''}`}
-                      title={
-                        !isAudioSupported 
-                          ? 'Audio recording not supported' 
-                          : isRecording 
-                            ? 'Click to stop recording' 
-                            : isTranscribing 
-                              ? 'Transcribing audio...' 
-                              : 'Click to start voice input'
-                      }
-                    >
-                      {isTranscribing ? '⏳' : isRecording ? '⏹️' : '🎤'}
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isLoading || !inputValue.trim()}
-                      className="submit-btn"
-                    >
-                      ➤
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="messages-area">
-              {/* Error Display */}
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                  ❌ {error}
-                </div>
-              )}
-
-              {/* Messages with enhanced context display */}
-              <MessageList
-                messages={messages}
-                lastContextInfo={contextInfo}
-                showContextDetails={showContextDetails}
-              />
-
-              {/* Typing Indicator */}
-              {isLoading && (
-                <TypingIndicator contextMode={contextMode} />
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-
-            <div className="input-area">
-              <form onSubmit={handleSubmit} className="input-section">
-                <div className="input-container">
-                  <textarea
-                    ref={textareaRef}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Continua a conversa..."
-                    className="input-textarea"
-                    rows={1}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSubmit(e);
-                      }
-                    }}
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={isTemporaryChat}
+                        onChange={(e) => setIsTemporaryChat(e.target.checked)}
+                        color="secondary"
+                      />
+                    }
+                    label="Chat Temporário"
                   />
-                  <div className="input-actions">
-                    <button
-                      type="button"
-                      onClick={toggleSpeech}
-                      disabled={isTranscribing || !isAudioSupported}
-                      className={`speech-btn ${isRecording ? 'recording' : isSpeechActive ? 'active' : ''} ${!isAudioSupported ? 'disabled' : ''}`}
-                      title={
-                        !isAudioSupported 
-                          ? 'Audio recording not supported' 
-                          : isRecording 
-                            ? 'Click to stop recording' 
-                            : isTranscribing 
-                              ? 'Transcribing audio...' 
-                              : 'Click to start voice input'
-                      }
-                    >
-                      {isTranscribing ? '⏳' : isRecording ? '⏹️' : '🎤'}
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isLoading || !inputValue.trim()}
-                      className="submit-btn"
-                    >
-                      ➤
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </>
-        )}
+                </Stack>
+              </Paper>
+            </Box>
 
-        <div className="bottom-bar">
-          <div className="model-selector">
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="model-dropdown"
-            >
-              <option value="hybrid-memory">🧠 Memória Híbrida</option>
-              <option value="gpt4">GPT-4 Simples</option>
-              <option value="gemini">Gemini Pro</option>
-            </select>
-          </div>
-          <div className="temporary-chat">
-            <span className="text-xs mr-2">Chat Temporário</span>
-            <button
-              onClick={() => setIsTemporaryChat(!isTemporaryChat)}
-              className={`temp-chat-toggle ${isTemporaryChat ? 'active' : ''}`}
-            ></button>
-          </div>
-        </div>
-      </div>
-    </div>
+            {/* Área Principal de Chat */}
+            <Box sx={{ flex: 1 }}>
+              <ChatCard elevation={3}>
+                {/* Área de Mensagens */}
+                <MessagesContainer>
+                  {messages.length === 0 ? (
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: '100%',
+                      textAlign: 'center',
+                      color: 'text.secondary'
+                    }}>
+                      <Typography variant="h4" gutterBottom>
+                        🤖 Ethic Companion
+                      </Typography>
+                      <Typography variant="body1" sx={{ maxWidth: 400 }}>
+                        Partilha um dilema ético ou uma reflexão pessoal. 
+                        Estou aqui para te ajudar a pensar através de questões morais complexas.
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <>
+                      {renderMessages()}
+                      {isLoading && !useStreaming && <MaterialThinkingIndicator />}
+                      <div ref={messagesEndRef} />
+                    </>
+                  )}
+                </MessagesContainer>
+
+                {/* Área de Input */}
+                <InputArea>
+                  <form onSubmit={handleSubmit}>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
+                      {/* Botão de Áudio */}
+                      <AudioButton
+                        onClick={toggleSpeech}
+                        isRecording={isRecording}
+                      />
+
+                      {/* Campo de Texto */}
+                      <TextField
+                        fullWidth
+                        multiline
+                        maxRows={4}
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        placeholder="Partilha um dilema ético ou uma reflexão pessoal..."
+                        variant="outlined"
+                        size="medium"
+                        disabled={isLoading}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSubmit(e);
+                          }
+                        }}
+                        sx={{ 
+                          '& .MuiOutlinedInput-root': {
+                            bgcolor: 'background.paper',
+                          }
+                        }}
+                      />
+
+                      {/* Botão de Envio */}
+                      <SendButton
+                        onClick={() => handleSubmit({ preventDefault: () => {} } as FormEvent)}
+                        disabled={isLoading || !inputValue.trim()}
+                      />
+                    </Box>
+                  </form>
+                </InputArea>
+              </ChatCard>
+            </Box>
+          </Box>
+        </MainContainer>
+
+        {/* Status de Conexão */}
+        <ConnectionStatus isConnected={!error} />
+      </Box>
+    </EarthyThemeProvider>
   );
 }
