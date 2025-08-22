@@ -97,7 +97,7 @@ export const MessagesContainer = styled(Box)(({ theme }) => ({
     width: '6px',
   },
   '&::-webkit-scrollbar-track': {
-    backgroundColor: theme.palette.background.alt,
+    backgroundColor: theme.palette.grey[100],
     borderRadius: '3px',
   },
   '&::-webkit-scrollbar-thumb': {
@@ -230,7 +230,7 @@ export const ThinkingIndicator = () => {
 export const InputArea = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
   borderTop: `1px solid ${theme.palette.divider}`,
-  backgroundColor: theme.palette.background.alt,
+  backgroundColor: theme.palette.grey[50],
 }));
 
 // Botão de envio customizado
